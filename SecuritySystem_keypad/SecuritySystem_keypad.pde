@@ -80,8 +80,10 @@ I2CDecodedKeypad kpd(KEYPAD_I2C_ADDR);
 long keyMillis = 0;
 bool keyAvailable = false;
 int passkeyPos = 0;
-char allowedPasskey[MAX_KEY_LENGTH+1] = { '1','2','3','4','\0' };
-char passkey[MAX_KEY_LENGTH+1] = { '\0' };
+char allowedPasskey[MAX_KEY_LENGTH+1] = { 
+  '1','2','3','4','\0' };
+char passkey[MAX_KEY_LENGTH+1] = { 
+  '\0' };
 
 // arming state variables
 bool fault;
@@ -100,17 +102,17 @@ void setup() {
   Serial.begin(57600);
 
   pinMode(13, OUTPUT);
-  
+
   pinMode(DPIN_MUX_S0, OUTPUT);
   pinMode(DPIN_MUX_S1, OUTPUT);
   pinMode(DPIN_MUX_S2, OUTPUT);
-  
+
   pinMode(DPIN_SR_LATCH, OUTPUT);
   pinMode(DPIN_SR_CLOCK, OUTPUT);
   pinMode(DPIN_SR_DATA, OUTPUT);
-  
+
   pinMode(DPIN_BUTTON_ARMING, INPUT);
-  
+
   // initialize clock device
   Wire.begin();
   RTC.begin();
@@ -118,14 +120,14 @@ void setup() {
   //  Serial.println("RTC is NOT running!");
   //  RTC.adjust(DateTime(__DATE__, __TIME__));
   //}
-  
+
   // initialize timer1 interrupt
   Timer1.initialize(250000);
   Timer1.attachInterrupt(timerOneCallback);
-  
+
   // initialize keypad device
   kpd.init();
-  
+
 }
 
 //------------------------------------------------------------------------------
@@ -168,7 +170,8 @@ void checkArmedState() {
         armedMillis = 0;
         shiftreg.clear(SR_LED_ARMED);
         sirenMillis = 0;
-      } else if (armedState == STATE_UNARMED) {
+      } 
+      else if (armedState == STATE_UNARMED) {
         armedState = STATE_ARMING;
         armedMillis = millis();
       }
@@ -178,12 +181,18 @@ void checkArmedState() {
     Serial.print("armedState = [");
     Serial.print(armedState, DEC);
     Serial.println("]");
+  } 
+  else if (millis() > keyMillis + KEYPAD_TIMEOUT) {
+    keyMillis = 0;
+    passkey[passkeyPos = 0] = '\0';
   }
-  
+
+
   if (armedState == STATE_ARMED) {
     shiftreg.set(SR_LED_ARMED);
     armedMillis = 0;
-  } else if (armedState == STATE_ARMING) {
+  } 
+  else if (armedState == STATE_ARMING) {
     if (millis() > armedMillis + ARMING_INTERVAL) {
       armedState = STATE_ARMED;
     }
@@ -198,12 +207,15 @@ void checkArmedState() {
 void checkKeypad() {
   char k = kpd.getKeyStroke();
   if (k > 0) {
+    keyMillis = millis();
     if (k == '*') {
       passkey[passkeyPos = 0] = '\0';
       keyAvailable = false;
-    } else if (k == '#') {
+    } 
+    else if (k == '#') {
       keyAvailable = true;
-    } else {
+    } 
+    else {
       if (passkeyPos >= MAX_KEY_LENGTH) {
         for (int i = 0; i < MAX_KEY_LENGTH; i++) {
           passkey[i] = passkey[i + 1];
@@ -237,28 +249,34 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     state = STATE_SHORT;
     if (armedState == STATE_ARMED) {
       shiftreg.set(statusOutput);
-    } else {
+    } 
+    else {
       shiftreg.clear(statusOutput);
     }
     fault = true;
-  } else if (sensorReading >= 400 && sensorReading <= 590) {
+  } 
+  else if (sensorReading >= 400 && sensorReading <= 590) {
     state = STATE_NORMAL;
     shiftreg.clear(statusOutput);
-  } else if (sensorReading >= 590 && sensorReading <= 800) {
+  } 
+  else if (sensorReading >= 590 && sensorReading <= 800) {
     if (armedState == STATE_ARMED) {
       state = STATE_TRIPPED;
       shiftreg.set(statusOutput);
       if (sirenMillis == 0) { 
         sirenMillis = millis();
       }
-    } else {
+    } 
+    else {
       shiftreg.clear(statusOutput);
     }
-  } else {
+  } 
+  else {
     state = STATE_OPEN;
     if (armedState == STATE_ARMED) {
       shiftreg.set(statusOutput);
-    } else {
+    } 
+    else {
       shiftreg.clear(statusOutput);
     }
     fault = true;
@@ -267,9 +285,11 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   DateTime now = RTC.now();
   if (armedState == STATE_ARMED) {
     Serial.print("ARMED - ");
-  } else if (armedState == STATE_ARMING) {
+  } 
+  else if (armedState == STATE_ARMING) {
     Serial.print("ARMING - ");
-  } else {
+  } 
+  else {
     Serial.print("UNARMED - ");
   }
   Serial.print(sensorInput, DEC);
@@ -290,6 +310,6 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   Serial.print(':');
   Serial.print(now.second(), DEC);
   Serial.println();  
-  
+
   return state;
 }
