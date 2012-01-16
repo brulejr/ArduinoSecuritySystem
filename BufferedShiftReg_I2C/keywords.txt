@@ -1,0 +1,15 @@
+###########################################
+# Syntax Coloring Map For BufferedShiftReg
+###########################################
+
+###########################################
+# Datatypes (KEYWORD1)
+###########################################
+
+BufferedShiftReg_I2C	KEYWORD1
+clear			KEYWORD2
+set			KEYWORD2
+write			KEYWORD2
+clearBuffer		KEYWORD2
+writeBuffer		KEYWORD2
+
