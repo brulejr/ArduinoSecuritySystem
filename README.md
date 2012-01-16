@@ -1,6 +1,6 @@
 _This security system is a work-in-progress._ 
 
-## Arduino Security System
+## ARDUINO SECURITY SYSTEM
 
 ### BACKGROUND
 
@@ -15,8 +15,9 @@ TBD
 #### Communications Controller
 TBD
 
-## Libraries
-TBD
+## LIBRARIES
+The following libraries naturally grew out of developing the _Adruino Security System_.
 
 ### BufferedShiftReg_I2C
-TBD
+Digital pins are a premium on an Arduino. As a result, often shift registers such as the [75HC595](http://www.sparkfun.com/datasheets/IC/SN74HC595.pdf) are used to reduce the pin count. Each 75HC595 uses three digital pins to create eight digital outputs. Multiple chips may be ganged together to create even more pin savings.
+Wouldn't it be nice if the same outputs could be created without consuming any Arduino digital pins? By connecting a [PCF8574](http://www.nxp.com/documents/data_sheet/PCF8574.pdf) to the I2C bus (Analog pins 4 and 5), and using this library, an I2C-based shift register is created.
