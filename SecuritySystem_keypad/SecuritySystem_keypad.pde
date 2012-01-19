@@ -29,7 +29,7 @@
 
 #include <TimerOne.h> 
 #include <Wire.h>
-#include <BufferedShiftReg.h>
+#include <BufferedShiftReg_I2C.h>
 #include <I2CDecodedKeyPad.h>
 #include "RTClib.h"
 
@@ -46,20 +46,18 @@
 #define DPIN_MUX_S1 9
 #define DPIN_MUX_S2 10
 
+#define DPIN_SIREN 11
+
 #define APIN_MUX_OUT 0
 
 #define MP_SENSOR_A 0
 #define MP_SENSOR_B 1
 
-#define DPIN_SR_LATCH 6  // ST_CP
-#define DPIN_SR_CLOCK 7  // SH_CP
-#define DPIN_SR_DATA  5  // DS
-
-#define DPIN_BUTTON_ARMING 12
 #define ARMING_INTERVAL 5000
 #define LED_ARMED_BLINK_INTERVAL 500
 #define SIREN_INTERVAL 5000
 
+#define SR_I2C_ADDR 0x39
 #define SR_LED_FAULT 0
 #define SR_LED_ARMED 1
 #define SR_LED_A 2
@@ -72,7 +70,7 @@
 #define MAX_KEY_LENGTH 4
 #define KEYPAD_TIMEOUT 15000
 
-BufferedShiftReg shiftreg(DPIN_SR_LATCH, DPIN_SR_CLOCK, DPIN_SR_DATA);
+BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
 RTC_DS1307 RTC;
 
 // keypad handling variables
@@ -107,11 +105,7 @@ void setup() {
   pinMode(DPIN_MUX_S1, OUTPUT);
   pinMode(DPIN_MUX_S2, OUTPUT);
 
-  pinMode(DPIN_SR_LATCH, OUTPUT);
-  pinMode(DPIN_SR_CLOCK, OUTPUT);
-  pinMode(DPIN_SR_DATA, OUTPUT);
-
-  pinMode(DPIN_BUTTON_ARMING, INPUT);
+  pinMode(DPIN_SIREN, OUTPUT);
 
   // initialize clock device
   Wire.begin();
@@ -120,6 +114,9 @@ void setup() {
   //  Serial.println("RTC is NOT running!");
   //  RTC.adjust(DateTime(__DATE__, __TIME__));
   //}
+
+  // clear the shift register
+  shiftreg.clearBuffer();
 
   // initialize timer1 interrupt
   Timer1.initialize(250000);
@@ -148,7 +145,8 @@ void loop() {
 void timerOneCallback(void) {    // timer compare interrupt service routine
   checkArmedState();
   siren = (sirenMillis > 0 && (millis() > sirenMillis + SIREN_INTERVAL));
-  shiftreg.write(SR_SIREN, siren);
+  //shiftreg.write(SR_SIREN, siren);
+  digitalWrite(DPIN_SIREN, siren);
 }
 
 //------------------------------------------------------------------------------
