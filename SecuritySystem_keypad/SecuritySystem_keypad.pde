@@ -31,7 +31,8 @@
 #include <Wire.h>
 #include <BufferedShiftReg_I2C.h>
 #include <I2CDecodedKeyPad.h>
-#include "RTClib.h"
+#include <LiquidCrystal_I2C.h>
+#include <RTClib.h>
 
 #define STATE_SHORT 0
 #define STATE_NORMAL 1
@@ -70,6 +71,8 @@
 #define MAX_KEY_LENGTH 4
 #define KEYPAD_TIMEOUT 15000
 
+#define LCD_I2C_ADDR 0x3A
+
 BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
 RTC_DS1307 RTC;
 
@@ -78,10 +81,11 @@ I2CDecodedKeypad kpd(KEYPAD_I2C_ADDR);
 long keyMillis = 0;
 bool keyAvailable = false;
 int passkeyPos = 0;
-char allowedPasskey[MAX_KEY_LENGTH+1] = { 
-  '1','2','3','4','\0' };
-char passkey[MAX_KEY_LENGTH+1] = { 
-  '\0' };
+char allowedPasskey[MAX_KEY_LENGTH+1] = { '1','2','3','4','\0' };
+char passkey[MAX_KEY_LENGTH+1] = { '\0' };
+
+// lcd variables
+LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4 line display
 
 // arming state variables
 bool fault;
@@ -92,6 +96,8 @@ bool armedLED = false;
 // siren state variables
 bool siren = false;
 long sirenMillis = 0;
+
+char buffer[20];
 
 //------------------------------------------------------------------------------
 /* Initialize the Security System firmware.
@@ -124,7 +130,21 @@ void setup() {
 
   // initialize keypad device
   kpd.init();
-
+  
+  // initialize lcd device
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  
+  // display splash screen for five seconds
+  lcd.setCursor(0, 0);  
+  lcd.print("Home Security System");
+  lcd.setCursor(7, 2); 
+  lcd.print("v0.1.0");
+  lcd.setCursor(4, 3); 
+  lcd.print("by Jon Brule");
+  delay(5000);
+  lcd.clear();
 }
 
 //------------------------------------------------------------------------------
@@ -137,6 +157,7 @@ void loop() {
   checkSensor(MP_SENSOR_B, SR_LED_B);
   shiftreg.write(SR_LED_FAULT, fault);
   shiftreg.writeBuffer();
+  updateLCD();
 }
 
 //------------------------------------------------------------------------------
@@ -152,7 +173,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
 //------------------------------------------------------------------------------
 /*
  */
-void checkArmedState() {
+ void checkArmedState() {
   if (keyAvailable) {
     Serial.print("passkey = [");
     Serial.print(passkey);
@@ -280,34 +301,20 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     fault = true;
   }
   return state;
-  DateTime now = RTC.now();
-  if (armedState == STATE_ARMED) {
-    Serial.print("ARMED - ");
-  } 
-  else if (armedState == STATE_ARMING) {
-    Serial.print("ARMING - ");
-  } 
-  else {
-    Serial.print("UNARMED - ");
-  }
-  Serial.print(sensorInput, DEC);
-  Serial.print(": ");
-  Serial.print(sensorReading, DEC);
-  Serial.print(" (");
-  Serial.print(state, DEC);
-  Serial.print(") - ");
-  Serial.print(now.year(), DEC);
-  Serial.print('/');
-  Serial.print(now.month(), DEC);
-  Serial.print('/');
-  Serial.print(now.day(), DEC);
-  Serial.print(' ');
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  Serial.println();  
+}
 
-  return state;
+//------------------------------------------------------------------------------
+/*
+ */
+void updateLCD() {
+  
+  // update time
+  lcd.setCursor(0, 0);
+  DateTime now = RTC.now();
+  sprintf(buffer, "%02u/%02u/%02u", now.month(), now.day(), now.year());
+  lcd.print(buffer);
+  lcd.setCursor(12, 0);
+  sprintf(buffer, "%02u:%02u:%02u", now.hour(), now.minute(), now.second());
+  lcd.print(buffer);
+ 
 }
