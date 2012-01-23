@@ -34,14 +34,16 @@
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 
-#define STATE_SHORT 0
-#define STATE_NORMAL 1
-#define STATE_TRIPPED 2
-#define STATE_OPEN 3
+#define SENSOR_SHORT 0
+#define SENSOR_NORMAL 1
+#define SENSOR_TRIPPED 2
+#define SENSOR_OPEN 3
 
 #define STATE_UNARMED 0
 #define STATE_ARMING 1
 #define STATE_ARMED 2
+#define STATE_TRIPPED 3
+#define STATE_ALERTING 4
 
 #define DPIN_MUX_S0 8
 #define DPIN_MUX_S1 9
@@ -168,6 +170,9 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
   siren = (sirenMillis > 0 && (millis() > sirenMillis + SIREN_INTERVAL));
   //shiftreg.write(SR_SIREN, siren);
   digitalWrite(DPIN_SIREN, siren);
+  if (siren) {
+    armedState = STATE_ALERTING;
+  }  
 }
 
 //------------------------------------------------------------------------------
@@ -184,7 +189,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
     Serial.println("]");
     if (strcmp(passkey, allowedPasskey) == 0) {
       Serial.println("Key matches");
-      if (armedState == STATE_ARMED || armedState == STATE_ARMING) {
+      if (armedState > STATE_UNARMED) {
         armedState = STATE_UNARMED;
         armedMillis = 0;
         shiftreg.clear(SR_LED_ARMED);
@@ -259,13 +264,13 @@ void checkKeypad() {
 /* Checks the state of the given sensor
  */
 byte checkSensor(byte sensorInput, byte statusOutput) {
-  byte state;
+  byte sensor;
   digitalWrite(DPIN_MUX_S0, bitRead(sensorInput, 0));
   digitalWrite(DPIN_MUX_S1, bitRead(sensorInput, 2));
   digitalWrite(DPIN_MUX_S2, bitRead(sensorInput, 1));
   int sensorReading = analogRead(APIN_MUX_OUT);
   if (sensorReading < 400) {
-    state = STATE_SHORT;
+    sensor = SENSOR_SHORT;
     if (armedState == STATE_ARMED) {
       shiftreg.set(statusOutput);
     } 
@@ -275,12 +280,13 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     fault = true;
   } 
   else if (sensorReading >= 400 && sensorReading <= 590) {
-    state = STATE_NORMAL;
+    sensor = SENSOR_NORMAL;
     shiftreg.clear(statusOutput);
   } 
   else if (sensorReading >= 590 && sensorReading <= 800) {
     if (armedState == STATE_ARMED) {
-      state = STATE_TRIPPED;
+      sensor = SENSOR_TRIPPED;
+      armedState = STATE_TRIPPED;
       shiftreg.set(statusOutput);
       if (sirenMillis == 0) { 
         sirenMillis = millis();
@@ -291,7 +297,7 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     }
   } 
   else {
-    state = STATE_OPEN;
+    sensor = SENSOR_OPEN;
     if (armedState == STATE_ARMED) {
       shiftreg.set(statusOutput);
     } 
@@ -300,7 +306,7 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     }
     fault = true;
   }
-  return state;
+  return sensor;
 }
 
 //------------------------------------------------------------------------------
@@ -316,5 +322,21 @@ void updateLCD() {
   lcd.setCursor(12, 0);
   sprintf(buffer, "%02u:%02u:%02u", now.hour(), now.minute(), now.second());
   lcd.print(buffer);
+  
+  // update state
+  lcd.setCursor(0, 1);
+  if (armedState == STATE_UNARMED) {
+    lcd.print("UNARMED  ");
+  } else if (armedState == STATE_ARMING) {
+    lcd.print("ARMING   ");
+  } else if (armedState == STATE_ARMED) {
+    lcd.print("ARMED   ");
+  } else if (armedState == STATE_TRIPPED) {
+    lcd.print("TRIPPED ");
+  } else if (armedState == STATE_ALERTING) {
+    lcd.print("ALERTING");
+  } else {
+    lcd.print("         ");
+  }
  
 }
