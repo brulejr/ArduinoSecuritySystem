@@ -27,12 +27,19 @@
  *  portion of the Arduino Security System.
  */
 
+// configurable options (uncomment to enable)
+//#define RESET_CLOCK
+//#define SERIAL_LOGGING
+
+// library includes
 #include <TimerOne.h> 
 #include <Wire.h>
 #include <BufferedShiftReg_I2C.h>
 #include <I2CDecodedKeyPad.h>
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
+
+#define VERSION "v0.1.0"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -118,10 +125,12 @@ void setup() {
   // initialize clock device
   Wire.begin();
   RTC.begin();
-  //if (! RTC.isrunning()) {
-  //  Serial.println("RTC is NOT running!");
-  //  RTC.adjust(DateTime(__DATE__, __TIME__));
-  //}
+  #ifdef RESET_CLOCK
+    if (! RTC.isrunning()) {
+      Serial.println("RTC is NOT running!");
+      RTC.adjust(DateTime(__DATE__, __TIME__));
+    }
+  #endif
 
   // clear the shift register
   shiftreg.clearBuffer();
@@ -142,7 +151,7 @@ void setup() {
   lcd.setCursor(0, 0);  
   lcd.print("Home Security System");
   lcd.setCursor(7, 2); 
-  lcd.print("v0.1.0");
+  lcd.print(VERSION);
   lcd.setCursor(4, 3); 
   lcd.print("by Jon Brule");
   delay(5000);
@@ -180,15 +189,19 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
  */
  void checkArmedState() {
   if (keyAvailable) {
-    Serial.print("passkey = [");
-    Serial.print(passkey);
-    Serial.print(",");
-    Serial.print(allowedPasskey);
-    Serial.print(",");
-    Serial.print(strcmp(passkey, allowedPasskey));
-    Serial.println("]");
+    #ifdef SERIAL_LOGGING
+      Serial.print("passkey = [");
+      Serial.print(passkey);
+      Serial.print(",");
+      Serial.print(allowedPasskey);
+      Serial.print(",");
+      Serial.print(strcmp(passkey, allowedPasskey));
+      Serial.println("]");
+    #endif
     if (strcmp(passkey, allowedPasskey) == 0) {
-      Serial.println("Key matches");
+      #ifdef SERIAL_LOGGING
+        Serial.println("Key matches");
+      #endif
       if (armedState > STATE_UNARMED) {
         armedState = STATE_UNARMED;
         armedMillis = 0;
@@ -202,9 +215,11 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
     }
     passkey[passkeyPos = 0] = '\0';
     keyAvailable = false;
-    Serial.print("armedState = [");
-    Serial.print(armedState, DEC);
-    Serial.println("]");
+    #ifdef SERIAL_LOGGING
+      Serial.print("armedState = [");
+      Serial.print(armedState, DEC);
+      Serial.println("]");
+    #endif
   } 
   else if (millis() > keyMillis + KEYPAD_TIMEOUT) {
     keyMillis = 0;
@@ -249,13 +264,15 @@ void checkKeypad() {
       }
       passkey[passkeyPos++] = k;
       passkey[passkeyPos] = '\0';
-      Serial.print("(rawkey: ");
-      Serial.print(kpd.getRawKey());
-      Serial.print(", keyval: ");
-      Serial.print(k, BYTE);
-      Serial.print(", passkey: ");
-      Serial.print(passkey);
-      Serial.println(")");
+      #ifdef SERIAL_LOGGING
+        Serial.print("(rawkey: ");
+        Serial.print(kpd.getRawKey());
+        Serial.print(", keyval: ");
+        Serial.print(k, BYTE);
+        Serial.print(", passkey: ");
+        Serial.print(passkey);
+        Serial.println(")");
+      #endif
     }
   }
 }
