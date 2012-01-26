@@ -68,10 +68,8 @@
 #define SIREN_INTERVAL 5000
 
 #define SR_I2C_ADDR 0x39
-#define SR_LED_FAULT 0
-#define SR_LED_ARMED 1
-#define SR_LED_A 2
-#define SR_LED_B 3
+#define SR_LED_A 0
+#define SR_LED_B 1
 #define SR_SIREN 7
 
 // With A0, A1 and A2 of PCF8574 to ground I2C address is 0x20
@@ -79,6 +77,8 @@
 #define KEYPAD_I2C_ADDR 0x38
 #define MAX_KEY_LENGTH 4
 #define KEYPAD_TIMEOUT 15000
+#define KEYPAD_LED_FAULT 5
+#define KEYPAD_LED_ARMED 6
 
 #define LCD_I2C_ADDR 0x3A
 
@@ -86,7 +86,7 @@ BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
 RTC_DS1307 RTC;
 
 // keypad handling variables
-I2CDecodedKeypad kpd(KEYPAD_I2C_ADDR);
+I2CDecodedKeypad kpd(KEYPAD_I2C_ADDR, B00011111);
 long keyMillis = 0;
 bool keyAvailable = false;
 int passkeyPos = 0;
@@ -132,15 +132,18 @@ void setup() {
     }
   #endif
 
-  // clear the shift register
-  shiftreg.clearBuffer();
-
   // initialize timer1 interrupt
   Timer1.initialize(250000);
   Timer1.attachInterrupt(timerOneCallback);
 
   // initialize keypad device
   kpd.init();
+  kpd.clearBuffer();
+  kpd.writeBuffer();
+
+  // clear the shift register
+  shiftreg.clearBuffer();
+  kpd.writeBuffer();
   
   // initialize lcd device
   lcd.init();
@@ -166,8 +169,9 @@ void loop() {
   fault = false;
   checkSensor(MP_SENSOR_A, SR_LED_A);
   checkSensor(MP_SENSOR_B, SR_LED_B);
-  shiftreg.write(SR_LED_FAULT, fault);
   shiftreg.writeBuffer();
+  kpd.write(KEYPAD_LED_FAULT, fault);
+  kpd.writeBuffer();
   updateLCD();
 }
 
@@ -205,7 +209,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
       if (armedState > STATE_UNARMED) {
         armedState = STATE_UNARMED;
         armedMillis = 0;
-        shiftreg.clear(SR_LED_ARMED);
+        kpd.clear(KEYPAD_LED_ARMED);
         sirenMillis = 0;
       } 
       else if (armedState == STATE_UNARMED) {
@@ -227,8 +231,8 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
   }
 
 
-  if (armedState == STATE_ARMED) {
-    shiftreg.set(SR_LED_ARMED);
+  if (armedState >= STATE_ARMED) {
+    kpd.set(KEYPAD_LED_ARMED);
     armedMillis = 0;
   } 
   else if (armedState == STATE_ARMING) {
@@ -236,7 +240,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
       armedState = STATE_ARMED;
     }
     armedLED = !armedLED;
-    shiftreg.write(SR_LED_ARMED, armedLED);
+    kpd.write(KEYPAD_LED_ARMED, armedLED);
   }
 }
 
@@ -301,9 +305,11 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     shiftreg.clear(statusOutput);
   } 
   else if (sensorReading >= 590 && sensorReading <= 800) {
-    if (armedState == STATE_ARMED) {
+    if (armedState >= STATE_ARMED) {
       sensor = SENSOR_TRIPPED;
-      armedState = STATE_TRIPPED;
+      if (armedState < STATE_ALERTING) {
+        armedState = STATE_TRIPPED;
+      }
       shiftreg.set(statusOutput);
       if (sirenMillis == 0) { 
         sirenMillis = millis();
