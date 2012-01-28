@@ -19,7 +19,7 @@
 //
 // Constructor
 //
-BufferedShiftReg_I2C::BufferedShiftReg_I2C(uint8_t srAddr, uint8_t mask) {
+BufferedShiftReg_I2C::BufferedShiftReg_I2C(int srAddr, uint8_t mask) {
   _srAddr = srAddr;
   _mask = mask;
   _buffer = 0;
@@ -37,6 +37,30 @@ void BufferedShiftReg_I2C::clear(uint8_t bit) {
 }
 
 //
+// Clears all buffer bits
+//
+void BufferedShiftReg_I2C::clearBuffer() {
+  _buffer = _mask ^ B11111111;
+}
+
+//
+// Reads byte from expander
+//
+void BufferedShiftReg_I2C::readBuffer() {
+  Wire.requestFrom(_srAddr, 1);
+  if (Wire.available()) {
+    _buffer = Wire.receive();
+  }
+}
+
+//
+// Reads a particular pin from the buffer
+//
+int BufferedShiftReg_I2C::readPin(uint8_t bit) {
+  return bitRead(_buffer, bit);
+}
+
+//
 // Sets the given bit within the buffer
 //
 void BufferedShiftReg_I2C::set(uint8_t bit) {
@@ -45,6 +69,13 @@ void BufferedShiftReg_I2C::set(uint8_t bit) {
   } else {
     bitClear(_buffer, bit);
   }
+}
+
+//
+// Sets all buffer bits
+//
+void BufferedShiftReg_I2C::setBuffer() {
+  _buffer = _mask;
 }
 
 //
@@ -59,20 +90,6 @@ void BufferedShiftReg_I2C::write(uint8_t bit, bool state) {
 }
 
 //
-// Clears all buffer bits
-//
-void BufferedShiftReg_I2C::clearBuffer() {
-  _buffer = _mask ^ B11111111;
-}
-
-//
-// Sets all buffer bits
-//
-void BufferedShiftReg_I2C::setBuffer() {
-  _buffer = _mask;
-}
-
-//
 // Writes the buffer to the I2C shift register
 //
 void BufferedShiftReg_I2C::writeBuffer() {
@@ -80,3 +97,4 @@ void BufferedShiftReg_I2C::writeBuffer() {
   Wire.send(_buffer);
   Wire.endTransmission();
 }
+

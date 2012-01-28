@@ -20,17 +20,19 @@
 
 class BufferedShiftReg_I2C {
   private:
-    uint8_t _buffer;
+    byte _buffer;
     uint8_t _mask;
-    uint8_t _srAddr;
+    int _srAddr;
 
   public:
-    BufferedShiftReg_I2C(uint8_t srAddr, uint8_t mask = B11111111);
+    BufferedShiftReg_I2C(int srAddr, uint8_t mask = B11111111);
     void clear(uint8_t pin);
-    void set(uint8_t pin);
-    void write(uint8_t pin, bool state);
     void clearBuffer();
+    void readBuffer();
+    int readPin(uint8_t bit);
+    void set(uint8_t pin);
     void setBuffer();
+    void write(uint8_t pin, bool state);
     void writeBuffer();
 };
 

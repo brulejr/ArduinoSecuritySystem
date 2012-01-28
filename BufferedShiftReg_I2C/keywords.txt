@@ -8,8 +8,12 @@
 
 BufferedShiftReg_I2C	KEYWORD1
 clear			KEYWORD2
+clearBuffer		KEYWORD2
+readBuffer		KEYWORD2
+readPin			KEYWORD2
 set			KEYWORD2
 write			KEYWORD2
-clearBuffer		KEYWORD2
+setBuffer		KEYWORD2
+write			KEYWORD2
 writeBuffer		KEYWORD2
 
