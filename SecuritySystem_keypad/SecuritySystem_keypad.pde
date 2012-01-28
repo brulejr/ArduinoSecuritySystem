@@ -29,7 +29,7 @@
 
 // configurable options (uncomment to enable)
 //#define RESET_CLOCK
-//#define SERIAL_LOGGING
+//#define DEBUG
 
 // library includes
 #include <TimerOne.h> 
@@ -39,7 +39,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 
-#define VERSION "v0.1.0"
+#define VERSION "v0.1.1"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -64,8 +64,8 @@
 #define MP_SENSOR_B 1
 
 #define ARMING_INTERVAL 5000
+#define ALERT_INTERVAL 5000
 #define LED_ARMED_BLINK_INTERVAL 500
-#define SIREN_INTERVAL 5000
 
 #define SR_I2C_ADDR 0x39
 #define SR_LED_A 0
@@ -82,7 +82,15 @@
 
 #define LCD_I2C_ADDR 0x3A
 
+#define SETTINGS_I2C_ADDR 0x3B
+
+// system settings variables
+BufferedShiftReg_I2C settings(SETTINGS_I2C_ADDR);
+
+// sensor state variables
 BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
+
+// real-time clock handling variables
 RTC_DS1307 RTC;
 
 // keypad handling variables
@@ -93,19 +101,19 @@ int passkeyPos = 0;
 char allowedPasskey[MAX_KEY_LENGTH+1] = { '1','2','3','4','\0' };
 char passkey[MAX_KEY_LENGTH+1] = { '\0' };
 
-// lcd variables
+// lcd handling variables
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4 line display
 
-// arming state variables
-bool fault;
+// system state variables
+long alertMillis = 0;
 long armedMillis = 0;
 byte armedState = STATE_UNARMED;
 bool armedLED = false;
+bool fault;
+bool maintMode;
+bool silentMode;
 
-// siren state variables
-bool siren = false;
-long sirenMillis = 0;
-
+// misc variables
 char buffer[20];
 
 //------------------------------------------------------------------------------
@@ -135,6 +143,10 @@ void setup() {
   // initialize timer1 interrupt
   Timer1.initialize(250000);
   Timer1.attachInterrupt(timerOneCallback);
+  
+  // initialize settings for reading
+  settings.setBuffer();
+  settings.writeBuffer();
 
   // initialize keypad device
   kpd.init();
@@ -157,7 +169,7 @@ void setup() {
   lcd.print(VERSION);
   lcd.setCursor(4, 3); 
   lcd.print("by Jon Brule");
-  delay(5000);
+  delay(3000);
   lcd.clear();
 }
 
@@ -165,6 +177,7 @@ void setup() {
 /* Main Loop: Monitor the Security System sensors.
  */
 void loop() {
+  checkSettings();
   checkKeypad();
   fault = false;
   checkSensor(MP_SENSOR_A, SR_LED_A);
@@ -180,12 +193,7 @@ void loop() {
  */
 void timerOneCallback(void) {    // timer compare interrupt service routine
   checkArmedState();
-  siren = (sirenMillis > 0 && (millis() > sirenMillis + SIREN_INTERVAL));
-  //shiftreg.write(SR_SIREN, siren);
-  digitalWrite(DPIN_SIREN, siren);
-  if (siren) {
-    armedState = STATE_ALERTING;
-  }  
+  digitalWrite(DPIN_SIREN, (!silentMode) && (armedState == STATE_ALERTING));
 }
 
 //------------------------------------------------------------------------------
@@ -193,7 +201,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
  */
  void checkArmedState() {
   if (keyAvailable) {
-    #ifdef SERIAL_LOGGING
+    #ifdef DEBUG
       Serial.print("passkey = [");
       Serial.print(passkey);
       Serial.print(",");
@@ -203,14 +211,14 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
       Serial.println("]");
     #endif
     if (strcmp(passkey, allowedPasskey) == 0) {
-      #ifdef SERIAL_LOGGING
+      #ifdef DEBUG
         Serial.println("Key matches");
       #endif
       if (armedState > STATE_UNARMED) {
         armedState = STATE_UNARMED;
         armedMillis = 0;
         kpd.clear(KEYPAD_LED_ARMED);
-        sirenMillis = 0;
+        alertMillis = 0;
       } 
       else if (armedState == STATE_UNARMED) {
         armedState = STATE_ARMING;
@@ -219,7 +227,7 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
     }
     passkey[passkeyPos = 0] = '\0';
     keyAvailable = false;
-    #ifdef SERIAL_LOGGING
+    #ifdef DEBUG
       Serial.print("armedState = [");
       Serial.print(armedState, DEC);
       Serial.println("]");
@@ -234,6 +242,9 @@ void timerOneCallback(void) {    // timer compare interrupt service routine
   if (armedState >= STATE_ARMED) {
     kpd.set(KEYPAD_LED_ARMED);
     armedMillis = 0;
+    if (alertMillis > 0 && (millis() > alertMillis + ALERT_INTERVAL)) {
+      armedState = STATE_ALERTING;
+    }
   } 
   else if (armedState == STATE_ARMING) {
     if (millis() > armedMillis + ARMING_INTERVAL) {
@@ -268,7 +279,7 @@ void checkKeypad() {
       }
       passkey[passkeyPos++] = k;
       passkey[passkeyPos] = '\0';
-      #ifdef SERIAL_LOGGING
+      #ifdef DEBUG
         Serial.print("(rawkey: ");
         Serial.print(kpd.getRawKey());
         Serial.print(", keyval: ");
@@ -311,8 +322,8 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
         armedState = STATE_TRIPPED;
       }
       shiftreg.set(statusOutput);
-      if (sirenMillis == 0) { 
-        sirenMillis = millis();
+      if (alertMillis == 0) { 
+        alertMillis = millis();
       }
     } 
     else {
@@ -330,6 +341,15 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     fault = true;
   }
   return sensor;
+}
+
+//------------------------------------------------------------------------------
+/*
+ */
+void checkSettings() {
+  settings.readBuffer();
+  maintMode = (settings.readPin(0) == HIGH);
+  silentMode = (settings.readPin(1) == HIGH);
 }
 
 //------------------------------------------------------------------------------
@@ -361,5 +381,23 @@ void updateLCD() {
   } else {
     lcd.print("         ");
   }
+
+  // update modes
+  lcd.setCursor(18, 3);
+  lcd.print((silentMode) ? "S" : " ");
+  lcd.print((maintMode) ? "M" : " ");
+
+  // update settings
+  #ifdef DEBUG
+    lcd.setCursor(12, 2);
+    lcd.print(settings.readPin(0));
+    lcd.print(settings.readPin(1));
+    lcd.print(settings.readPin(2));
+    lcd.print(settings.readPin(3));
+    lcd.print(settings.readPin(4));
+    lcd.print(settings.readPin(5));
+    lcd.print(settings.readPin(6));
+    lcd.print(settings.readPin(7));
+  #endif
  
 }
