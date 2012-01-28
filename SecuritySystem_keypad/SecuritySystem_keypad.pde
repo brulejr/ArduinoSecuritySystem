@@ -39,7 +39,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 
-#define VERSION "v0.1.1"
+#define VERSION "v0.1.2"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -51,6 +51,7 @@
 #define STATE_ARMED 2
 #define STATE_TRIPPED 3
 #define STATE_ALERTING 4
+#define STATE_FAULT 5
 
 #define DPIN_MUX_S0 8
 #define DPIN_MUX_S1 9
@@ -183,6 +184,7 @@ void loop() {
   checkSensor(MP_SENSOR_A, SR_LED_A);
   checkSensor(MP_SENSOR_B, SR_LED_B);
   shiftreg.writeBuffer();
+  fault |= (armedState == STATE_FAULT);
   kpd.write(KEYPAD_LED_FAULT, fault);
   kpd.writeBuffer();
   updateLCD();
@@ -192,67 +194,8 @@ void loop() {
 /* Handle monitoring analysis logic
  */
 void timerOneCallback(void) {    // timer compare interrupt service routine
-  checkArmedState();
-  digitalWrite(DPIN_SIREN, (!silentMode) && (armedState == STATE_ALERTING));
-}
-
-//------------------------------------------------------------------------------
-/*
- */
- void checkArmedState() {
-  if (keyAvailable) {
-    #ifdef DEBUG
-      Serial.print("passkey = [");
-      Serial.print(passkey);
-      Serial.print(",");
-      Serial.print(allowedPasskey);
-      Serial.print(",");
-      Serial.print(strcmp(passkey, allowedPasskey));
-      Serial.println("]");
-    #endif
-    if (strcmp(passkey, allowedPasskey) == 0) {
-      #ifdef DEBUG
-        Serial.println("Key matches");
-      #endif
-      if (armedState > STATE_UNARMED) {
-        armedState = STATE_UNARMED;
-        armedMillis = 0;
-        kpd.clear(KEYPAD_LED_ARMED);
-        alertMillis = 0;
-      } 
-      else if (armedState == STATE_UNARMED) {
-        armedState = STATE_ARMING;
-        armedMillis = millis();
-      }
-    }
-    passkey[passkeyPos = 0] = '\0';
-    keyAvailable = false;
-    #ifdef DEBUG
-      Serial.print("armedState = [");
-      Serial.print(armedState, DEC);
-      Serial.println("]");
-    #endif
-  } 
-  else if (millis() > keyMillis + KEYPAD_TIMEOUT) {
-    keyMillis = 0;
-    passkey[passkeyPos = 0] = '\0';
-  }
-
-
-  if (armedState >= STATE_ARMED) {
-    kpd.set(KEYPAD_LED_ARMED);
-    armedMillis = 0;
-    if (alertMillis > 0 && (millis() > alertMillis + ALERT_INTERVAL)) {
-      armedState = STATE_ALERTING;
-    }
-  } 
-  else if (armedState == STATE_ARMING) {
-    if (millis() > armedMillis + ARMING_INTERVAL) {
-      armedState = STATE_ARMED;
-    }
-    armedLED = !armedLED;
-    kpd.write(KEYPAD_LED_ARMED, armedLED);
-  }
+  checkSystemState();
+  digitalWrite(DPIN_SIREN, (!silentMode) && (armedState >= STATE_ALERTING));
 }
 
 //------------------------------------------------------------------------------
@@ -344,7 +287,7 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
 }
 
 //------------------------------------------------------------------------------
-/*
+/* Retrieves the current system settings.
  */
 void checkSettings() {
   settings.readBuffer();
@@ -353,7 +296,73 @@ void checkSettings() {
 }
 
 //------------------------------------------------------------------------------
-/*
+/* Analyzes the current system state given the state of sensors and keypad
+ * input.
+ */
+ void checkSystemState() {
+  if (keyAvailable) {
+    #ifdef DEBUG
+      Serial.print("passkey = [");
+      Serial.print(passkey);
+      Serial.print(",");
+      Serial.print(allowedPasskey);
+      Serial.print(",");
+      Serial.print(strcmp(passkey, allowedPasskey));
+      Serial.println("]");
+    #endif
+    if (strcmp(passkey, allowedPasskey) == 0) {
+      #ifdef DEBUG
+        Serial.println("Key matches");
+      #endif
+      if (armedState > STATE_UNARMED) {
+        armedState = STATE_UNARMED;
+        armedMillis = 0;
+        kpd.clear(KEYPAD_LED_ARMED);
+        alertMillis = 0;
+        fault = false;
+      } 
+      else if (armedState == STATE_UNARMED) {
+        armedState = STATE_ARMING;
+        armedMillis = millis();
+      }
+    }
+    passkey[passkeyPos = 0] = '\0';
+    keyAvailable = false;
+    #ifdef DEBUG
+      Serial.print("armedState = [");
+      Serial.print(armedState, DEC);
+      Serial.println("]");
+    #endif
+  } 
+  else if (millis() > keyMillis + KEYPAD_TIMEOUT) {
+    keyMillis = 0;
+    passkey[passkeyPos = 0] = '\0';
+  }
+
+  if (armedState >= STATE_ARMED) {
+    kpd.set(KEYPAD_LED_ARMED);
+    armedMillis = 0;
+    if (armedState < STATE_ALERTING) {
+      if (alertMillis > 0 && (millis() > alertMillis + ALERT_INTERVAL)) {
+        armedState = STATE_ALERTING;
+      }
+    }
+  } 
+  else if (armedState == STATE_ARMING) {
+    if (millis() > armedMillis + ARMING_INTERVAL) {
+      armedState = STATE_ARMED;
+    }
+    armedLED = !armedLED;
+    kpd.write(KEYPAD_LED_ARMED, armedLED);
+  }
+  
+  if (fault) {
+    armedState = STATE_FAULT;
+  }
+}
+
+//------------------------------------------------------------------------------
+/* Updates all messages to the LCD.
  */
 void updateLCD() {
   
@@ -378,6 +387,8 @@ void updateLCD() {
     lcd.print("TRIPPED ");
   } else if (armedState == STATE_ALERTING) {
     lcd.print("ALERTING");
+  } else if (armedState == STATE_FAULT) {
+    lcd.print("<FAULT> ");
   } else {
     lcd.print("         ");
   }
