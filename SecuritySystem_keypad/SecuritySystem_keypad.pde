@@ -39,7 +39,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 
-#define VERSION "v0.1.2"
+#define VERSION "v0.1.3"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -195,7 +195,9 @@ void loop() {
  */
 void timerOneCallback(void) {    // timer compare interrupt service routine
   checkSystemState();
-  digitalWrite(DPIN_SIREN, (!silentMode) && (armedState >= STATE_ALERTING));
+  if (!maintMode) {
+    digitalWrite(DPIN_SIREN, (!silentMode) && (armedState >= STATE_ALERTING));
+  }
 }
 
 //------------------------------------------------------------------------------
@@ -291,8 +293,15 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
  */
 void checkSettings() {
   settings.readBuffer();
-  maintMode = (settings.readPin(0) == HIGH);
+  
   silentMode = (settings.readPin(1) == HIGH);
+  
+  int maintSwitch = settings.readPin(0);
+  if (maintSwitch == HIGH) {
+    maintMode |= (armedState == STATE_UNARMED) && (maintSwitch == HIGH);
+  } else {
+    maintMode = false;
+  }
 }
 
 //------------------------------------------------------------------------------
