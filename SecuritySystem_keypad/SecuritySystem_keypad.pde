@@ -39,7 +39,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
 
-#define VERSION "v0.1.3"
+#define VERSION "v0.1.4"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -400,6 +400,12 @@ void updateLCD() {
     lcd.print("<FAULT> ");
   } else {
     lcd.print("         ");
+  }
+
+  // update keypad entry
+  lcd.setCursor(20 - MAX_KEY_LENGTH, 2);
+  for (int i = 0; i < MAX_KEY_LENGTH; i++) {
+    lcd.print((i < passkeyPos) ? '*' : ' ');
   }
 
   // update modes
