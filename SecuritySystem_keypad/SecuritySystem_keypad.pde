@@ -29,6 +29,7 @@
 
 // configurable options (uncomment to enable)
 //#define RESET_CLOCK
+//#define RESET_PARMS
 //#define DEBUG
 
 // library includes
@@ -38,6 +39,7 @@
 #include <I2CDecodedKeyPad.h>
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
+#include <EEPROM.h>
 
 #define VERSION "v0.1.4"
 
@@ -64,9 +66,8 @@
 #define MP_SENSOR_A 0
 #define MP_SENSOR_B 1
 
-#define ARMING_INTERVAL 5000
-#define ALERT_INTERVAL 5000
-#define LED_ARMED_BLINK_INTERVAL 500
+#define ARMING_TIMEOUT 5
+#define ALERT_TIMEOUT 5
 
 #define SR_I2C_ADDR 0x39
 #define SR_LED_A 0
@@ -77,13 +78,17 @@
 // With A0, A1 and A2 of PCF8574A to ground I2C address is 0x38
 #define KEYPAD_I2C_ADDR 0x38
 #define MAX_KEY_LENGTH 4
-#define KEYPAD_TIMEOUT 15000
+#define KEYPAD_TIMEOUT 15
 #define KEYPAD_LED_FAULT 5
 #define KEYPAD_LED_ARMED 6
 
 #define LCD_I2C_ADDR 0x3A
 
 #define SETTINGS_I2C_ADDR 0x3B
+
+#define EEPROM_ARMING_TIMEOUT 0
+#define EEPROM_ALERT_TIMEOUT 1
+#define EEPROM_KEYPAD_TIMEOUT 2
 
 // system settings variables
 BufferedShiftReg_I2C settings(SETTINGS_I2C_ADDR);
@@ -106,11 +111,14 @@ char passkey[MAX_KEY_LENGTH+1] = { '\0' };
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4 line display
 
 // system state variables
+int alertTimeout;
 long alertMillis = 0;
 long armedMillis = 0;
 byte armedState = STATE_UNARMED;
 bool armedLED = false;
+int armingTimeout;
 bool fault;
+int keypadTimeout;
 bool maintMode;
 bool silentMode;
 
@@ -157,6 +165,16 @@ void setup() {
   // clear the shift register
   shiftreg.clearBuffer();
   kpd.writeBuffer();
+  
+  // initialize parameters
+  #ifdef RESET_PARMS
+    EEPROM.write(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT);
+    EEPROM.write(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
+    EEPROM.write(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
+  #endif
+  armingTimeout = getParameter(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT) * 1000;
+  alertTimeout = getParameter(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT) * 1000;
+  keypadTimeout = getParameter(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT) * 1000;
   
   // initialize lcd device
   lcd.init();
@@ -330,7 +348,7 @@ void checkSettings() {
       Serial.println("]");
     #endif
   } 
-  else if (millis() > keyMillis + KEYPAD_TIMEOUT) {
+  else if (millis() > keyMillis + keypadTimeout) {
     keyMillis = 0;
     passkey[passkeyPos = 0] = '\0';
   }
@@ -339,13 +357,13 @@ void checkSettings() {
     kpd.set(KEYPAD_LED_ARMED);
     armedMillis = 0;
     if (armedState < STATE_ALERTING) {
-      if (alertMillis > 0 && (millis() > alertMillis + ALERT_INTERVAL)) {
+      if (alertMillis > 0 && (millis() > alertMillis + alertTimeout)) {
         armedState = STATE_ALERTING;
       }
     }
   } 
   else if (armedState == STATE_ARMING) {
-    if (millis() > armedMillis + ARMING_INTERVAL) {
+    if (millis() > armedMillis + armingTimeout) {
       armedState = STATE_ARMED;
     }
     armedLED = !armedLED;
@@ -355,6 +373,21 @@ void checkSettings() {
   if (fault) {
     armedState = STATE_FAULT;
   }
+}
+
+//------------------------------------------------------------------------------
+/* Updates all messages to the LCD.
+ */
+byte getParameter(int addr, byte defaultValue) {
+  byte value = EEPROM.read(addr);
+  #ifdef DEBUG
+    Serial.print("EEPROM<");
+    Serial.print(addr);
+    Serial.print("> = [");
+    Serial.print(value);
+    Serial.println("]");
+  #endif
+  return (value > 0) ? value : defaultValue;
 }
 
 //------------------------------------------------------------------------------
