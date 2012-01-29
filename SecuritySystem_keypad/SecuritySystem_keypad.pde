@@ -248,12 +248,7 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   int sensorReading = analogRead(APIN_MUX_OUT);
   if (sensorReading < 400) {
     sensor = SENSOR_SHORT;
-    if (armedState == STATE_ARMED) {
-      shiftreg.set(statusOutput);
-    } 
-    else {
-      shiftreg.clear(statusOutput);
-    }
+    shiftreg.set(statusOutput);
     fault = true;
   } 
   else if (sensorReading >= 400 && sensorReading <= 590) {
@@ -261,28 +256,20 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
     shiftreg.clear(statusOutput);
   } 
   else if (sensorReading >= 590 && sensorReading <= 800) {
+    shiftreg.set(statusOutput);
     if (armedState >= STATE_ARMED) {
       sensor = SENSOR_TRIPPED;
       if (armedState < STATE_ALERTING) {
         armedState = STATE_TRIPPED;
       }
-      shiftreg.set(statusOutput);
       if (alertMillis == 0) { 
         alertMillis = millis();
       }
     } 
-    else {
-      shiftreg.clear(statusOutput);
-    }
   } 
   else {
     sensor = SENSOR_OPEN;
-    if (armedState == STATE_ARMED) {
-      shiftreg.set(statusOutput);
-    } 
-    else {
-      shiftreg.clear(statusOutput);
-    }
+    shiftreg.set(statusOutput);
     fault = true;
   }
   return sensor;
