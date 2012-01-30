@@ -37,15 +37,15 @@
 //#define DEBUG
 
 // library includes
-#include <TimerOne.h> 
-#include <Wire.h>
 #include <BufferedShiftReg_I2C.h>
+#include <EEPROM.h>
 #include <I2CDecodedKeyPad.h>
 #include <LiquidCrystal_I2C.h>
 #include <RTClib.h>
-#include <EEPROM.h>
+#include <TimerOne.h> 
+#include <Wire.h>
 
-#define VERSION "v0.1.6"
+#define VERSION "v0.1.7"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -92,6 +92,7 @@
 #define SETTINGS_DIP_SILENT_ENABLE 1
 
 #define MAX_MAINT_MODES 4
+#define MAX_LENGTH_MODE 7
 #define DEFAULT_MAINT_MODE 0
 #define MAINT_MODE_ARMING_TIMEOUT 1
 #define MAINT_MODE_ALERT_TIMEOUT 2
@@ -99,6 +100,13 @@
 #define EEPROM_ARMING_TIMEOUT 0
 #define EEPROM_ALERT_TIMEOUT 1
 #define EEPROM_KEYPAD_TIMEOUT 2
+char modes[MAX_MAINT_MODES][MAX_LENGTH_MODE] = {
+  { '\0' }, 
+  { 'A','R','M','_','T','O','\0' }, 
+  { 'A','L','R','_','T','O','\0' }, 
+  { 'K','E','Y','_','T','O','\0' }
+};
+
 
 // system switches variables
 BufferedShiftReg_I2C switches(SETTINGS_I2C_ADDR);
@@ -185,9 +193,9 @@ void setup() {
     EEPROM.write(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
     EEPROM.write(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
   #endif
-  armingTimeout = getSetting(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT) * 1000;
-  alertTimeout = getSetting(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT) * 1000;
-  keypadTimeout = getSetting(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT) * 1000;
+  armingTimeout = getSetting(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT);
+  alertTimeout = getSetting(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
+  keypadTimeout = getSetting(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
   
   // initialize lcd device
   lcd.init();
@@ -326,6 +334,18 @@ void checkSwitches() {
       maintModeMillis = millis();
       if (digitalRead(DPIN_MAINT_MODE) == HIGH) {
         maintMode = (++maintMode) % MAX_MAINT_MODES;
+        if (maintMode == MAINT_MODE_ARMING_TIMEOUT) {
+          sprintf(keypad, "%d", armingTimeout);
+          keypadPos = strlen(keypad);
+        } else if (maintMode == MAINT_MODE_ALERT_TIMEOUT) {
+          sprintf(keypad, "%d", alertTimeout);
+          keypadPos = strlen(keypad);
+        } else if (maintMode == MAINT_MODE_KEYPAD_TIMEOUT) {
+          sprintf(keypad, "%d", keypadTimeout);
+          keypadPos = strlen(keypad);
+        } else {
+          keypad[keypadPos = 0] = '\0';
+        }
       }
     }
   } else {
@@ -338,7 +358,7 @@ void checkSwitches() {
  * input.
  */
  void checkSystemState() {
-  if (keyAvailable) {
+  if (keyAvailable && (!maintEnabled || (maintMode == DEFAULT_MAINT_MODE))) {
     #ifdef DEBUG
       Serial.print("keypad = [");
       Serial.print(keypad);
@@ -372,7 +392,7 @@ void checkSwitches() {
       Serial.println("]");
     #endif
   } 
-  else if (millis() > keyMillis + keypadTimeout) {
+  else if ((!maintEnabled) &&(millis() > keyMillis + (keypadTimeout * 1000))) {
     keyMillis = 0;
     keypad[keypadPos = 0] = '\0';
   }
@@ -381,13 +401,13 @@ void checkSwitches() {
     kpd.set(KEYPAD_LED_ARMED);
     systemMillis = 0;
     if (systemState < STATE_ALERTING) {
-      if (alertMillis > 0 && (millis() > alertMillis + alertTimeout)) {
+      if (alertMillis > 0 && (millis() > alertMillis + (alertTimeout * 1000))) {
         systemState = STATE_ALERTING;
       }
     }
   } 
   else if (systemState == STATE_ARMING) {
-    if (millis() > systemMillis + armingTimeout) {
+    if (millis() > systemMillis + (armingTimeout * 1000)) {
       systemState = STATE_ARMED;
     }
     systemLED = !systemLED;
@@ -447,25 +467,24 @@ void updateLCD() {
     lcd.print("         ");
   }
 
-  // update keypad entry
-  lcd.setCursor(20 - MAX_KEY_LENGTH, 2);
-  for (int i = 0; i < MAX_KEY_LENGTH; i++) {
-    lcd.print((i < keypadPos) ? '*' : ' ');
+  // update keypad data w/ possible labels for maintenance mode
+  lcd.setCursor(0, 2);
+  if (maintEnabled && (maintMode != DEFAULT_MAINT_MODE)) {
+    lcd.print(modes[maintMode]);
+    lcd.print(" = ");
+    for (int i = 0; i < MAX_KEY_LENGTH; i++) {
+      lcd.print((i < keypadPos) ? keypad[i] : ' ');
+    }
+  } else {
+    for (int i = 0; i < 20; i++) {
+      lcd.print((i < keypadPos) ? '*' : ' ');
+    }
   }
 
   // update modes
   lcd.setCursor(18, 3);
   lcd.print((silentMode) ? "S" : " ");
   lcd.print((maintEnabled) ? "M" : " ");
-  
-  // update parm handling
-  lcd.setCursor(0, 2);
-  if (maintEnabled) {
-    lcd.print("P");
-    lcd.print(maintMode);
-  } else {
-    lcd.print("  ");
-  }
 
   // update switches
   #ifdef DEBUG
