@@ -25,6 +25,10 @@
  *  -----------
  *  This sketch provides the core logic for the I/O (sensor and output)
  *  portion of the Arduino Security System.
+ *
+ * PCF8574 Notes:
+ *   - With A0, A1 and A2 of PCF8574 to ground I2C address is 0x20
+ *   - With A0, A1 and A2 of PCF8574A to ground I2C address is 0x38
  */
 
 // configurable options (uncomment to enable)
@@ -75,19 +79,17 @@
 #define SR_LED_B 1
 #define SR_SIREN 7
 
-// With A0, A1 and A2 of PCF8574 to ground I2C address is 0x20
-// With A0, A1 and A2 of PCF8574A to ground I2C address is 0x38
 #define KEYPAD_I2C_ADDR 0x38
-#define MAX_KEY_LENGTH 4
-#define KEYPAD_TIMEOUT 15
-#define KEYPAD_LED_FAULT 5
 #define KEYPAD_LED_ARMED 6
+#define KEYPAD_LED_FAULT 5
+#define KEYPAD_TIMEOUT 15
+#define MAX_KEY_LENGTH 4
 
 #define LCD_I2C_ADDR 0x3A
 
 #define SETTINGS_I2C_ADDR 0x3B
-#define SETTINGS_DIP_MAINT_MODE 0
-#define SETTINGS_DIP_SILENT_MODE 1
+#define SETTINGS_DIP_MAINT_ENABLE 0
+#define SETTINGS_DIP_SILENT_ENABLE 1
 
 #define MAX_MAINT_MODES 4
 #define DEFAULT_MAINT_MODE 0
@@ -109,11 +111,12 @@ RTC_DS1307 RTC;
 
 // keypad handling variables
 I2CDecodedKeypad kpd(KEYPAD_I2C_ADDR, B00011111);
+char allowedPasskey[MAX_KEY_LENGTH+1] = { '1','2','3','4','\0' };
 long keyMillis = 0;
 bool keyAvailable = false;
-int passkeyPos = 0;
-char allowedPasskey[MAX_KEY_LENGTH+1] = { '1','2','3','4','\0' };
-char passkey[MAX_KEY_LENGTH+1] = { '\0' };
+char keypad[MAX_KEY_LENGTH+1] = { '\0' };
+int keypadPos = 0;
+int keypadTimeout;
 
 // lcd handling variables
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4 line display
@@ -123,7 +126,6 @@ int alertTimeout;
 long alertMillis = 0;
 int armingTimeout;
 bool fault;
-int keypadTimeout;
 bool maintEnabled;
 int maintMode = 0;
 long maintModeMillis = 0;
@@ -237,29 +239,29 @@ void checkKeypad() {
   if (k > 0) {
     keyMillis = millis();
     if (k == '*') {
-      passkey[passkeyPos = 0] = '\0';
+      keypad[keypadPos = 0] = '\0';
       keyAvailable = false;
     } 
     else if (k == '#') {
       keyAvailable = true;
     } 
     else {
-      if (passkeyPos >= MAX_KEY_LENGTH) {
+      if (keypadPos >= MAX_KEY_LENGTH) {
         for (int i = 0; i < MAX_KEY_LENGTH; i++) {
-          passkey[i] = passkey[i + 1];
+          keypad[i] = keypad[i + 1];
         }
-        passkey[MAX_KEY_LENGTH] = '\0';
-        passkeyPos = MAX_KEY_LENGTH - 1;
+        keypad[MAX_KEY_LENGTH] = '\0';
+        keypadPos = MAX_KEY_LENGTH - 1;
       }
-      passkey[passkeyPos++] = k;
-      passkey[passkeyPos] = '\0';
+      keypad[keypadPos++] = k;
+      keypad[keypadPos] = '\0';
       #ifdef DEBUG
         Serial.print("(rawkey: ");
         Serial.print(kpd.getRawKey());
         Serial.print(", keyval: ");
         Serial.print(k, BYTE);
-        Serial.print(", passkey: ");
-        Serial.print(passkey);
+        Serial.print(", keypad: ");
+        Serial.print(keypad);
         Serial.println(")");
       #endif
     }
@@ -310,9 +312,9 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
 void checkSwitches() {
   switches.readBuffer();
   
-  silentMode = (switches.readPin(SETTINGS_DIP_SILENT_MODE) == HIGH);
+  silentMode = (switches.readPin(SETTINGS_DIP_SILENT_ENABLE) == HIGH);
   
-  int maintSwitch = switches.readPin(SETTINGS_DIP_MAINT_MODE);
+  int maintSwitch = switches.readPin(SETTINGS_DIP_MAINT_ENABLE);
   if (maintSwitch == HIGH) {
     maintEnabled |= (systemState == STATE_UNARMED) && (maintSwitch == HIGH);
   } else {
@@ -338,15 +340,15 @@ void checkSwitches() {
  void checkSystemState() {
   if (keyAvailable) {
     #ifdef DEBUG
-      Serial.print("passkey = [");
-      Serial.print(passkey);
+      Serial.print("keypad = [");
+      Serial.print(keypad);
       Serial.print(",");
       Serial.print(allowedPasskey);
       Serial.print(",");
-      Serial.print(strcmp(passkey, allowedPasskey));
+      Serial.print(strcmp(keypad, allowedPasskey));
       Serial.println("]");
     #endif
-    if (strcmp(passkey, allowedPasskey) == 0) {
+    if (strcmp(keypad, allowedPasskey) == 0) {
       #ifdef DEBUG
         Serial.println("Key matches");
       #endif
@@ -362,7 +364,7 @@ void checkSwitches() {
         systemMillis = millis();
       }
     }
-    passkey[passkeyPos = 0] = '\0';
+    keypad[keypadPos = 0] = '\0';
     keyAvailable = false;
     #ifdef DEBUG
       Serial.print("systemState = [");
@@ -372,7 +374,7 @@ void checkSwitches() {
   } 
   else if (millis() > keyMillis + keypadTimeout) {
     keyMillis = 0;
-    passkey[passkeyPos = 0] = '\0';
+    keypad[keypadPos = 0] = '\0';
   }
 
   if (systemState >= STATE_ARMED) {
@@ -448,7 +450,7 @@ void updateLCD() {
   // update keypad entry
   lcd.setCursor(20 - MAX_KEY_LENGTH, 2);
   for (int i = 0; i < MAX_KEY_LENGTH; i++) {
-    lcd.print((i < passkeyPos) ? '*' : ' ');
+    lcd.print((i < keypadPos) ? '*' : ' ');
   }
 
   // update modes
