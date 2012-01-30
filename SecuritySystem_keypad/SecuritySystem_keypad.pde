@@ -60,6 +60,7 @@
 #define DPIN_MUX_S2 10
 
 #define DPIN_SIREN 11
+#define DPIN_PARM_MODE 12
 
 #define APIN_MUX_OUT 0
 
@@ -85,7 +86,10 @@
 #define LCD_I2C_ADDR 0x3A
 
 #define SETTINGS_I2C_ADDR 0x3B
+#define SETTINGS_DIP_MAINT_MODE 0
+#define SETTINGS_DIP_SILENT_MODE 1
 
+#define MAX_PARM_MODES 4
 #define EEPROM_ARMING_TIMEOUT 0
 #define EEPROM_ALERT_TIMEOUT 1
 #define EEPROM_KEYPAD_TIMEOUT 2
@@ -120,6 +124,8 @@ int armingTimeout;
 bool fault;
 int keypadTimeout;
 bool maintMode;
+int parmMode = 0;
+long parmModeMillis = 0;
 bool silentMode;
 
 // misc variables
@@ -138,6 +144,8 @@ void setup() {
   pinMode(DPIN_MUX_S2, OUTPUT);
 
   pinMode(DPIN_SIREN, OUTPUT);
+  
+  pinMode(DPIN_PARM_MODE, INPUT);
 
   // initialize clock device
   Wire.begin();
@@ -299,13 +307,24 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
 void checkSettings() {
   settings.readBuffer();
   
-  silentMode = (settings.readPin(1) == HIGH);
+  silentMode = (settings.readPin(SETTINGS_DIP_SILENT_MODE) == HIGH);
   
-  int maintSwitch = settings.readPin(0);
+  int maintSwitch = settings.readPin(SETTINGS_DIP_MAINT_MODE);
   if (maintSwitch == HIGH) {
     maintMode |= (armedState == STATE_UNARMED) && (maintSwitch == HIGH);
   } else {
     maintMode = false;
+  }
+  
+  if (maintMode) {
+    if (millis() > parmModeMillis + 250) {
+      parmModeMillis = millis();
+      if (digitalRead(DPIN_PARM_MODE) == HIGH) {
+        parmMode = (++parmMode) % MAX_PARM_MODES;
+      }
+    }
+  } else {
+    parmMode = 0;
   }
 }
 
@@ -376,7 +395,8 @@ void checkSettings() {
 }
 
 //------------------------------------------------------------------------------
-/* Updates all messages to the LCD.
+/* Retrieves a parameter from EEPROM, applying a default value if the given 
+ * parameter is undefined (0x00 byte).
  */
 byte getParameter(int addr, byte defaultValue) {
   byte value = EEPROM.read(addr);
@@ -432,6 +452,15 @@ void updateLCD() {
   lcd.setCursor(18, 3);
   lcd.print((silentMode) ? "S" : " ");
   lcd.print((maintMode) ? "M" : " ");
+  
+  // update parm handling
+  lcd.setCursor(0, 2);
+  if (maintMode) {
+    lcd.print("P");
+    lcd.print(parmMode);
+  } else {
+    lcd.print("  ");
+  }
 
   // update settings
   #ifdef DEBUG
