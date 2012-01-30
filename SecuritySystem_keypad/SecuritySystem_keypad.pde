@@ -41,7 +41,7 @@
 #include <RTClib.h>
 #include <EEPROM.h>
 
-#define VERSION "v0.1.4"
+#define VERSION "v0.1.5"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -60,7 +60,7 @@
 #define DPIN_MUX_S2 10
 
 #define DPIN_SIREN 11
-#define DPIN_PARM_MODE 12
+#define DPIN_MAINT_MODE 12
 
 #define APIN_MUX_OUT 0
 
@@ -89,13 +89,14 @@
 #define SETTINGS_DIP_MAINT_MODE 0
 #define SETTINGS_DIP_SILENT_MODE 1
 
-#define MAX_PARM_MODES 4
+#define MAX_MAINT_MODES 4
+#define DEFAULT_MAINT_MODE 0
 #define EEPROM_ARMING_TIMEOUT 0
 #define EEPROM_ALERT_TIMEOUT 1
 #define EEPROM_KEYPAD_TIMEOUT 2
 
-// system settings variables
-BufferedShiftReg_I2C settings(SETTINGS_I2C_ADDR);
+// system switches variables
+BufferedShiftReg_I2C switches(SETTINGS_I2C_ADDR);
 
 // sensor state variables
 BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
@@ -117,16 +118,16 @@ LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4
 // system state variables
 int alertTimeout;
 long alertMillis = 0;
-long armedMillis = 0;
-byte armedState = STATE_UNARMED;
-bool armedLED = false;
 int armingTimeout;
 bool fault;
 int keypadTimeout;
-bool maintMode;
-int parmMode = 0;
-long parmModeMillis = 0;
+bool maintEnabled;
+int maintMode = 0;
+long maintModeMillis = 0;
 bool silentMode;
+bool systemLED = false;
+long systemMillis = 0;
+byte systemState = STATE_UNARMED;
 
 // misc variables
 char buffer[20];
@@ -137,15 +138,18 @@ char buffer[20];
 void setup() {
   Serial.begin(57600);
 
-  pinMode(13, OUTPUT);
-
+  // initialize digital pins
   pinMode(DPIN_MUX_S0, OUTPUT);
   pinMode(DPIN_MUX_S1, OUTPUT);
   pinMode(DPIN_MUX_S2, OUTPUT);
 
   pinMode(DPIN_SIREN, OUTPUT);
   
-  pinMode(DPIN_PARM_MODE, INPUT);
+  pinMode(DPIN_MAINT_MODE, INPUT);
+
+  // initialize timer1 interrupt
+  Timer1.initialize(250000);
+  Timer1.attachInterrupt(timerOneCallback);
 
   // initialize clock device
   Wire.begin();
@@ -156,14 +160,10 @@ void setup() {
       RTC.adjust(DateTime(__DATE__, __TIME__));
     }
   #endif
-
-  // initialize timer1 interrupt
-  Timer1.initialize(250000);
-  Timer1.attachInterrupt(timerOneCallback);
   
-  // initialize settings for reading
-  settings.setBuffer();
-  settings.writeBuffer();
+  // initialize switches for reading
+  switches.setBuffer();
+  switches.writeBuffer();
 
   // initialize keypad device
   kpd.init();
@@ -174,15 +174,15 @@ void setup() {
   shiftreg.clearBuffer();
   kpd.writeBuffer();
   
-  // initialize parameters
+  // initialize settings
   #ifdef RESET_PARMS
     EEPROM.write(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT);
     EEPROM.write(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
     EEPROM.write(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
   #endif
-  armingTimeout = getParameter(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT) * 1000;
-  alertTimeout = getParameter(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT) * 1000;
-  keypadTimeout = getParameter(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT) * 1000;
+  armingTimeout = getSetting(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT) * 1000;
+  alertTimeout = getSetting(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT) * 1000;
+  keypadTimeout = getSetting(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT) * 1000;
   
   // initialize lcd device
   lcd.init();
@@ -204,13 +204,13 @@ void setup() {
 /* Main Loop: Monitor the Security System sensors.
  */
 void loop() {
-  checkSettings();
+  checkSwitches();
   checkKeypad();
   fault = false;
   checkSensor(MP_SENSOR_A, SR_LED_A);
   checkSensor(MP_SENSOR_B, SR_LED_B);
   shiftreg.writeBuffer();
-  fault |= (armedState == STATE_FAULT);
+  fault |= (systemState == STATE_FAULT);
   kpd.write(KEYPAD_LED_FAULT, fault);
   kpd.writeBuffer();
   updateLCD();
@@ -221,8 +221,8 @@ void loop() {
  */
 void timerOneCallback(void) {    // timer compare interrupt service routine
   checkSystemState();
-  if (!maintMode) {
-    digitalWrite(DPIN_SIREN, (!silentMode) && (armedState >= STATE_ALERTING));
+  if (!maintEnabled) {
+    digitalWrite(DPIN_SIREN, (!silentMode) && (systemState >= STATE_ALERTING));
   }
 }
 
@@ -283,10 +283,10 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   } 
   else if (sensorReading >= 590 && sensorReading <= 800) {
     shiftreg.set(statusOutput);
-    if (armedState >= STATE_ARMED) {
+    if (systemState >= STATE_ARMED) {
       sensor = SENSOR_TRIPPED;
-      if (armedState < STATE_ALERTING) {
-        armedState = STATE_TRIPPED;
+      if (systemState < STATE_ALERTING) {
+        systemState = STATE_TRIPPED;
       }
       if (alertMillis == 0) { 
         alertMillis = millis();
@@ -302,29 +302,29 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
 }
 
 //------------------------------------------------------------------------------
-/* Retrieves the current system settings.
+/* Retrieves the current status of the system switches.
  */
-void checkSettings() {
-  settings.readBuffer();
+void checkSwitches() {
+  switches.readBuffer();
   
-  silentMode = (settings.readPin(SETTINGS_DIP_SILENT_MODE) == HIGH);
+  silentMode = (switches.readPin(SETTINGS_DIP_SILENT_MODE) == HIGH);
   
-  int maintSwitch = settings.readPin(SETTINGS_DIP_MAINT_MODE);
+  int maintSwitch = switches.readPin(SETTINGS_DIP_MAINT_MODE);
   if (maintSwitch == HIGH) {
-    maintMode |= (armedState == STATE_UNARMED) && (maintSwitch == HIGH);
+    maintEnabled |= (systemState == STATE_UNARMED) && (maintSwitch == HIGH);
   } else {
-    maintMode = false;
+    maintEnabled = false;
   }
   
-  if (maintMode) {
-    if (millis() > parmModeMillis + 250) {
-      parmModeMillis = millis();
-      if (digitalRead(DPIN_PARM_MODE) == HIGH) {
-        parmMode = (++parmMode) % MAX_PARM_MODES;
+  if (maintEnabled) {
+    if (millis() > maintModeMillis + 500) {
+      maintModeMillis = millis();
+      if (digitalRead(DPIN_MAINT_MODE) == HIGH) {
+        maintMode = (++maintMode) % MAX_MAINT_MODES;
       }
     }
   } else {
-    parmMode = 0;
+    maintMode = DEFAULT_MAINT_MODE;
   }
 }
 
@@ -347,23 +347,23 @@ void checkSettings() {
       #ifdef DEBUG
         Serial.println("Key matches");
       #endif
-      if (armedState > STATE_UNARMED) {
-        armedState = STATE_UNARMED;
-        armedMillis = 0;
+      if (systemState > STATE_UNARMED) {
+        systemState = STATE_UNARMED;
+        systemMillis = 0;
         kpd.clear(KEYPAD_LED_ARMED);
         alertMillis = 0;
         fault = false;
       } 
-      else if (armedState == STATE_UNARMED) {
-        armedState = STATE_ARMING;
-        armedMillis = millis();
+      else if (systemState == STATE_UNARMED) {
+        systemState = STATE_ARMING;
+        systemMillis = millis();
       }
     }
     passkey[passkeyPos = 0] = '\0';
     keyAvailable = false;
     #ifdef DEBUG
-      Serial.print("armedState = [");
-      Serial.print(armedState, DEC);
+      Serial.print("systemState = [");
+      Serial.print(systemState, DEC);
       Serial.println("]");
     #endif
   } 
@@ -372,33 +372,33 @@ void checkSettings() {
     passkey[passkeyPos = 0] = '\0';
   }
 
-  if (armedState >= STATE_ARMED) {
+  if (systemState >= STATE_ARMED) {
     kpd.set(KEYPAD_LED_ARMED);
-    armedMillis = 0;
-    if (armedState < STATE_ALERTING) {
+    systemMillis = 0;
+    if (systemState < STATE_ALERTING) {
       if (alertMillis > 0 && (millis() > alertMillis + alertTimeout)) {
-        armedState = STATE_ALERTING;
+        systemState = STATE_ALERTING;
       }
     }
   } 
-  else if (armedState == STATE_ARMING) {
-    if (millis() > armedMillis + armingTimeout) {
-      armedState = STATE_ARMED;
+  else if (systemState == STATE_ARMING) {
+    if (millis() > systemMillis + armingTimeout) {
+      systemState = STATE_ARMED;
     }
-    armedLED = !armedLED;
-    kpd.write(KEYPAD_LED_ARMED, armedLED);
+    systemLED = !systemLED;
+    kpd.write(KEYPAD_LED_ARMED, systemLED);
   }
   
   if (fault) {
-    armedState = STATE_FAULT;
+    systemState = STATE_FAULT;
   }
 }
 
 //------------------------------------------------------------------------------
-/* Retrieves a parameter from EEPROM, applying a default value if the given 
- * parameter is undefined (0x00 byte).
+/* Retrieves a setting from EEPROM, applying a default value if the given 
+ * setting is undefined (0x00 byte).
  */
-byte getParameter(int addr, byte defaultValue) {
+byte getSetting(int addr, byte defaultValue) {
   byte value = EEPROM.read(addr);
   #ifdef DEBUG
     Serial.print("EEPROM<");
@@ -426,17 +426,17 @@ void updateLCD() {
   
   // update state
   lcd.setCursor(0, 1);
-  if (armedState == STATE_UNARMED) {
+  if (systemState == STATE_UNARMED) {
     lcd.print("UNARMED  ");
-  } else if (armedState == STATE_ARMING) {
+  } else if (systemState == STATE_ARMING) {
     lcd.print("ARMING   ");
-  } else if (armedState == STATE_ARMED) {
+  } else if (systemState == STATE_ARMED) {
     lcd.print("ARMED   ");
-  } else if (armedState == STATE_TRIPPED) {
+  } else if (systemState == STATE_TRIPPED) {
     lcd.print("TRIPPED ");
-  } else if (armedState == STATE_ALERTING) {
+  } else if (systemState == STATE_ALERTING) {
     lcd.print("ALERTING");
-  } else if (armedState == STATE_FAULT) {
+  } else if (systemState == STATE_FAULT) {
     lcd.print("<FAULT> ");
   } else {
     lcd.print("         ");
@@ -451,28 +451,23 @@ void updateLCD() {
   // update modes
   lcd.setCursor(18, 3);
   lcd.print((silentMode) ? "S" : " ");
-  lcd.print((maintMode) ? "M" : " ");
+  lcd.print((maintEnabled) ? "M" : " ");
   
   // update parm handling
   lcd.setCursor(0, 2);
-  if (maintMode) {
+  if (maintEnabled) {
     lcd.print("P");
-    lcd.print(parmMode);
+    lcd.print(maintMode);
   } else {
     lcd.print("  ");
   }
 
-  // update settings
+  // update switches
   #ifdef DEBUG
     lcd.setCursor(12, 2);
-    lcd.print(settings.readPin(0));
-    lcd.print(settings.readPin(1));
-    lcd.print(settings.readPin(2));
-    lcd.print(settings.readPin(3));
-    lcd.print(settings.readPin(4));
-    lcd.print(settings.readPin(5));
-    lcd.print(settings.readPin(6));
-    lcd.print(settings.readPin(7));
+    for (int i = 0; i<8; i++) {
+      lcd.print(switches.readPin(i));
+    }
   #endif
  
 }
