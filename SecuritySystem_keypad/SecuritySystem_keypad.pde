@@ -41,7 +41,7 @@
 #include <RTClib.h>
 #include <EEPROM.h>
 
-#define VERSION "v0.1.5"
+#define VERSION "v0.1.6"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -91,6 +91,9 @@
 
 #define MAX_MAINT_MODES 4
 #define DEFAULT_MAINT_MODE 0
+#define MAINT_MODE_ARMING_TIMEOUT 1
+#define MAINT_MODE_ALERT_TIMEOUT 2
+#define MAINT_MODE_KEYPAD_TIMEOUT 3
 #define EEPROM_ARMING_TIMEOUT 0
 #define EEPROM_ALERT_TIMEOUT 1
 #define EEPROM_KEYPAD_TIMEOUT 2
@@ -99,7 +102,7 @@
 BufferedShiftReg_I2C switches(SETTINGS_I2C_ADDR);
 
 // sensor state variables
-BufferedShiftReg_I2C shiftreg(SR_I2C_ADDR, B00000000);
+BufferedShiftReg_I2C sensorStatus(SR_I2C_ADDR, B00000000);
 
 // real-time clock handling variables
 RTC_DS1307 RTC;
@@ -171,7 +174,7 @@ void setup() {
   kpd.writeBuffer();
 
   // clear the shift register
-  shiftreg.clearBuffer();
+  sensorStatus.clearBuffer();
   kpd.writeBuffer();
   
   // initialize settings
@@ -209,7 +212,7 @@ void loop() {
   fault = false;
   checkSensor(MP_SENSOR_A, SR_LED_A);
   checkSensor(MP_SENSOR_B, SR_LED_B);
-  shiftreg.writeBuffer();
+  sensorStatus.writeBuffer();
   fault |= (systemState == STATE_FAULT);
   kpd.write(KEYPAD_LED_FAULT, fault);
   kpd.writeBuffer();
@@ -274,15 +277,15 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   int sensorReading = analogRead(APIN_MUX_OUT);
   if (sensorReading < 400) {
     sensor = SENSOR_SHORT;
-    shiftreg.set(statusOutput);
+    sensorStatus.set(statusOutput);
     fault = true;
   } 
   else if (sensorReading >= 400 && sensorReading <= 590) {
     sensor = SENSOR_NORMAL;
-    shiftreg.clear(statusOutput);
+    sensorStatus.clear(statusOutput);
   } 
   else if (sensorReading >= 590 && sensorReading <= 800) {
-    shiftreg.set(statusOutput);
+    sensorStatus.set(statusOutput);
     if (systemState >= STATE_ARMED) {
       sensor = SENSOR_TRIPPED;
       if (systemState < STATE_ALERTING) {
@@ -295,7 +298,7 @@ byte checkSensor(byte sensorInput, byte statusOutput) {
   } 
   else {
     sensor = SENSOR_OPEN;
-    shiftreg.set(statusOutput);
+    sensorStatus.set(statusOutput);
     fault = true;
   }
   return sensor;
