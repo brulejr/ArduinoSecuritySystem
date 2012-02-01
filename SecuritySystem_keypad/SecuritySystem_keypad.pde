@@ -45,7 +45,7 @@
 #include <TimerOne.h> 
 #include <Wire.h>
 
-#define VERSION "v0.1.7"
+#define VERSION "v0.1.8"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -71,9 +71,6 @@
 #define MP_SENSOR_A 0
 #define MP_SENSOR_B 1
 
-#define ARMING_TIMEOUT 5
-#define ALERT_TIMEOUT 5
-
 #define SR_I2C_ADDR 0x39
 #define SR_LED_A 0
 #define SR_LED_B 1
@@ -82,7 +79,6 @@
 #define KEYPAD_I2C_ADDR 0x38
 #define KEYPAD_LED_ARMED 6
 #define KEYPAD_LED_FAULT 5
-#define KEYPAD_TIMEOUT 15
 #define MAX_KEY_LENGTH 4
 
 #define LCD_I2C_ADDR 0x3A
@@ -91,22 +87,28 @@
 #define SETTINGS_DIP_MAINT_ENABLE 0
 #define SETTINGS_DIP_SILENT_ENABLE 1
 
+#define DEFAULT_ARMING_TIMEOUT 5
+#define DEFAULT_ALERT_TIMEOUT 5
+#define DEFAULT_KEYPAD_TIMEOUT 15
+
 #define MAX_MAINT_MODES 4
 #define MAX_LENGTH_MODE 7
 #define DEFAULT_MAINT_MODE 0
-#define MAINT_MODE_ARMING_TIMEOUT 1
-#define MAINT_MODE_ALERT_TIMEOUT 2
-#define MAINT_MODE_KEYPAD_TIMEOUT 3
-#define EEPROM_ARMING_TIMEOUT 0
-#define EEPROM_ALERT_TIMEOUT 1
-#define EEPROM_KEYPAD_TIMEOUT 2
+#define MODE_ARMING_TIMEOUT 1
+#define MODE_ALERT_TIMEOUT 2
+#define MODE_KEYPAD_TIMEOUT 3
 char modes[MAX_MAINT_MODES][MAX_LENGTH_MODE] = {
   { '\0' }, 
   { 'A','R','M','_','T','O','\0' }, 
   { 'A','L','R','_','T','O','\0' }, 
   { 'K','E','Y','_','T','O','\0' }
 };
-
+byte modeData[MAX_MAINT_MODES] = {
+  DEFAULT_MAINT_MODE,
+  DEFAULT_ARMING_TIMEOUT,
+  DEFAULT_ALERT_TIMEOUT,
+  DEFAULT_KEYPAD_TIMEOUT  
+};
 
 // system switches variables
 BufferedShiftReg_I2C switches(SETTINGS_I2C_ADDR);
@@ -124,15 +126,12 @@ long keyMillis = 0;
 bool keyAvailable = false;
 char keypad[MAX_KEY_LENGTH+1] = { '\0' };
 int keypadPos = 0;
-int keypadTimeout;
 
 // lcd handling variables
 LiquidCrystal_I2C lcd(LCD_I2C_ADDR, 20, 4);  // set the LCD for a 20 chars and 4 line display
 
 // system state variables
-int alertTimeout;
 long alertMillis = 0;
-int armingTimeout;
 bool fault;
 bool maintEnabled;
 int maintMode = 0;
@@ -189,13 +188,13 @@ void setup() {
   
   // initialize settings
   #ifdef RESET_PARMS
-    EEPROM.write(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT);
-    EEPROM.write(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
-    EEPROM.write(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
+    for (int i = 0; i < MAX_MAINT_MODES; i++) {
+      EEPROM.write(i, modeData[i]);
+    }
   #endif
-  armingTimeout = getSetting(EEPROM_ARMING_TIMEOUT, ARMING_TIMEOUT);
-  alertTimeout = getSetting(EEPROM_ALERT_TIMEOUT, ALERT_TIMEOUT);
-  keypadTimeout = getSetting(EEPROM_KEYPAD_TIMEOUT, KEYPAD_TIMEOUT);
+  for (int i = 0; i < MAX_MAINT_MODES; i++) {
+    modeData[i] = getSetting(i);
+  }
   
   // initialize lcd device
   lcd.init();
@@ -334,16 +333,9 @@ void checkSwitches() {
       maintModeMillis = millis();
       if (digitalRead(DPIN_MAINT_MODE) == HIGH) {
         maintMode = (++maintMode) % MAX_MAINT_MODES;
-        if (maintMode == MAINT_MODE_ARMING_TIMEOUT) {
-          sprintf(keypad, "%d", armingTimeout);
-          keypadPos = strlen(keypad);
-        } else if (maintMode == MAINT_MODE_ALERT_TIMEOUT) {
-          sprintf(keypad, "%d", alertTimeout);
-          keypadPos = strlen(keypad);
-        } else if (maintMode == MAINT_MODE_KEYPAD_TIMEOUT) {
-          sprintf(keypad, "%d", keypadTimeout);
-          keypadPos = strlen(keypad);
-        } else {
+        sprintf(keypad, "%d", modeData[maintMode]);
+        keypadPos = strlen(keypad);
+        if (maintMode == DEFAULT_MAINT_MODE) {
           keypad[keypadPos = 0] = '\0';
         }
       }
@@ -392,7 +384,7 @@ void checkSwitches() {
       Serial.println("]");
     #endif
   } 
-  else if ((!maintEnabled) &&(millis() > keyMillis + (keypadTimeout * 1000))) {
+  else if ((!maintEnabled) &&(millis() > keyMillis + (modeData[MODE_KEYPAD_TIMEOUT] * 1000))) {
     keyMillis = 0;
     keypad[keypadPos = 0] = '\0';
   }
@@ -401,13 +393,13 @@ void checkSwitches() {
     kpd.set(KEYPAD_LED_ARMED);
     systemMillis = 0;
     if (systemState < STATE_ALERTING) {
-      if (alertMillis > 0 && (millis() > alertMillis + (alertTimeout * 1000))) {
+      if (alertMillis > 0 && (millis() > alertMillis + (modeData[MODE_ALERT_TIMEOUT] * 1000))) {
         systemState = STATE_ALERTING;
       }
     }
   } 
   else if (systemState == STATE_ARMING) {
-    if (millis() > systemMillis + (armingTimeout * 1000)) {
+    if (millis() > systemMillis + (modeData[MODE_ARMING_TIMEOUT] * 1000)) {
       systemState = STATE_ARMED;
     }
     systemLED = !systemLED;
@@ -420,10 +412,9 @@ void checkSwitches() {
 }
 
 //------------------------------------------------------------------------------
-/* Retrieves a setting from EEPROM, applying a default value if the given 
- * setting is undefined (0x00 byte).
+/* Retrieves a setting from EEPROM, logging it if DEBUG is enabled.
  */
-byte getSetting(int addr, byte defaultValue) {
+byte getSetting(int addr) {
   byte value = EEPROM.read(addr);
   #ifdef DEBUG
     Serial.print("EEPROM<");
@@ -432,7 +423,7 @@ byte getSetting(int addr, byte defaultValue) {
     Serial.print(value);
     Serial.println("]");
   #endif
-  return (value > 0) ? value : defaultValue;
+  return value;
 }
 
 //------------------------------------------------------------------------------
