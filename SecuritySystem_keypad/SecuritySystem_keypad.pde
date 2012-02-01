@@ -45,7 +45,7 @@
 #include <TimerOne.h> 
 #include <Wire.h>
 
-#define VERSION "v0.1.8"
+#define VERSION "v0.1.9"
 
 #define SENSOR_SHORT 0
 #define SENSOR_NORMAL 1
@@ -387,6 +387,16 @@ void checkSwitches() {
   else if ((!maintEnabled) &&(millis() > keyMillis + (modeData[MODE_KEYPAD_TIMEOUT] * 1000))) {
     keyMillis = 0;
     keypad[keypadPos = 0] = '\0';
+  }
+  else if (keyAvailable && (maintEnabled && (maintMode != DEFAULT_MAINT_MODE))) {
+    modeData[maintMode] = atoi(keypad);
+    #ifdef DEBUG
+      Serial.print("value = [");
+      Serial.print(value, DEC);
+      Serial.print("]");
+    #endif
+    EEPROM.write(maintMode, modeData[maintMode]);
+    keyAvailable = false;
   }
 
   if (systemState >= STATE_ARMED) {
