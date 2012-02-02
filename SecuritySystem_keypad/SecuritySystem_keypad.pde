@@ -91,23 +91,29 @@
 #define DEFAULT_ALERT_TIMEOUT 5
 #define DEFAULT_KEYPAD_TIMEOUT 15
 
-#define MAX_MAINT_MODES 4
+#define MAX_MAINT_MODES 5
 #define MAX_LENGTH_MODE 7
 #define DEFAULT_MAINT_MODE 0
 #define MODE_ARMING_TIMEOUT 1
 #define MODE_ALERT_TIMEOUT 2
 #define MODE_KEYPAD_TIMEOUT 3
+#define MODE_PASSWD 4
 char modes[MAX_MAINT_MODES][MAX_LENGTH_MODE] = {
   { '\0' }, 
   { 'A','R','M','_','T','O','\0' }, 
   { 'A','L','R','_','T','O','\0' }, 
-  { 'K','E','Y','_','T','O','\0' }
+  { 'K','E','Y','_','T','O','\0' },
+  { 'P','A','S','S','W','D','\0' }
 };
 byte modeData[MAX_MAINT_MODES] = {
-  DEFAULT_MAINT_MODE,
+  0x00,
   DEFAULT_ARMING_TIMEOUT,
   DEFAULT_ALERT_TIMEOUT,
-  DEFAULT_KEYPAD_TIMEOUT  
+  DEFAULT_KEYPAD_TIMEOUT,
+  0x00
+};
+byte modeLoc[MAX_MAINT_MODES] = {
+  0, 1, 2, 3, 4
 };
 
 // system switches variables
@@ -189,11 +195,23 @@ void setup() {
   // initialize settings
   #ifdef RESET_PARMS
     for (int i = 0; i < MAX_MAINT_MODES; i++) {
-      EEPROM.write(i, modeData[i]);
+      if (i == MODE_PASSWD) {
+        //for (int j = 0; j < MAX_KEY_LENGTH; j++) {
+        //  EEPROM.write(modeLoc[i] + j, allowedPasskey[j]);
+        //}
+      } else {
+        EEPROM.write(modeLoc[i], modeData[i]);
+      }
     }
   #endif
   for (int i = 0; i < MAX_MAINT_MODES; i++) {
-    modeData[i] = getSetting(i);
+    if (i == MODE_PASSWD) {
+      for (int j = 0; j < MAX_KEY_LENGTH; j++) {
+        allowedPasskey[j] = getSetting(modeLoc[i] + j);
+      }
+    } else {
+      modeData[i] = getSetting(modeLoc[i]);
+    }
   }
   
   // initialize lcd device
@@ -333,7 +351,11 @@ void checkSwitches() {
       maintModeMillis = millis();
       if (digitalRead(DPIN_MAINT_MODE) == HIGH) {
         maintMode = (++maintMode) % MAX_MAINT_MODES;
-        sprintf(keypad, "%d", modeData[maintMode]);
+        if (maintMode == MODE_PASSWD) {
+          strcpy(keypad, allowedPasskey);
+        } else {
+          sprintf(keypad, "%d", modeData[maintMode]);
+        }
         keypadPos = strlen(keypad);
         if (maintMode == DEFAULT_MAINT_MODE) {
           keypad[keypadPos = 0] = '\0';
@@ -389,13 +411,20 @@ void checkSwitches() {
     keypad[keypadPos = 0] = '\0';
   }
   else if (keyAvailable && (maintEnabled && (maintMode != DEFAULT_MAINT_MODE))) {
-    modeData[maintMode] = atoi(keypad);
-    #ifdef DEBUG
-      Serial.print("value = [");
-      Serial.print(value, DEC);
-      Serial.print("]");
-    #endif
-    EEPROM.write(maintMode, modeData[maintMode]);
+    if (maintMode == MODE_PASSWD) {
+      strcpy(allowedPasskey, keypad);
+      for (int i = 0; i < MAX_KEY_LENGTH; i++) {
+        EEPROM.write(modeLoc[maintMode] + i, allowedPasskey[i]);
+      }
+    } else {
+      modeData[maintMode] = atoi(keypad);
+      #ifdef DEBUG
+        Serial.print("value = [");
+        Serial.print(modeData[maintMode], DEC);
+        Serial.print("]");
+      #endif
+      EEPROM.write(modeLoc[maintMode], modeData[maintMode]);
+    }
     keyAvailable = false;
   }
 
